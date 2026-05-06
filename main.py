@@ -6,6 +6,7 @@ Model  : dima806/facial_emotions_image_detection  (ViT, 7-class FER)
 import os
 import io
 import datetime
+import time
 import base64
 import sys
 
@@ -35,17 +36,37 @@ models.Base.metadata.create_all(bind=engine)
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Lumora Emotion Detection API", version="2.0.0")
 
+# raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
+# origins = [o.strip() for o in raw_origins.split(",")]
+
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=origins,
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
+# ---------------------------------------------------------------------------
+# App + CORS (Fixed for Production)
+# ---------------------------------------------------------------------------
+app = FastAPI(title="Lumora Emotion Detection API", version="2.0.0")
+
 raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
 origins = [o.strip() for o in raw_origins.split(",")]
+
+# If origins is strictly ["*"], we must set allow_credentials to False
+credentials_allowed = True
+if "*" in origins:
+    credentials_allowed = False
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
+    allow_credentials=credentials_allowed,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # ---------------------------------------------------------------------------
 # Lazy-load ViT model (on first use, not at startup)
 # ---------------------------------------------------------------------------
@@ -92,11 +113,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-def init_system_state(db: Session):
-    if not db.query(models.SystemState).first():
-        db.add(models.SystemState(capture_requested=False))
-        db.commit()
 
 def range_to_since(range_str: str) -> datetime.datetime:
     now = datetime.datetime.utcnow()
@@ -174,23 +190,30 @@ def login(user: UserAuth, db: Session = Depends(get_db)):
 # Trigger / polling
 # ---------------------------------------------------------------------------
 @app.post("/trigger-capture")
-def trigger_capture(db: Session = Depends(get_db)):
-    init_system_state(db)
-    state = db.query(models.SystemState).first()
-    if state:
+def trigger_capture(company: str = Query(...), db: Session = Depends(get_db)):
+    state = db.query(models.SystemState).filter(models.SystemState.company == company).first()
+    if not state:
+        state = models.SystemState(company=company, capture_requested=True)
+        db.add(state)
+    else:
         state.capture_requested = True
         state.timestamp = datetime.datetime.utcnow()
-        db.commit()
-    return {"status": "Capture triggered"}
+    db.commit()
+    return {"status": f"Capture triggered for {company}"}
 
 @app.get("/check-trigger")
-def check_trigger(db: Session = Depends(get_db)):
-    init_system_state(db)
-    state = db.query(models.SystemState).first()
+def check_trigger(company: str = Query(...), db: Session = Depends(get_db)):
+    state = db.query(models.SystemState).filter(models.SystemState.company == company).first()
+
     if state and state.capture_requested:
-        state.capture_requested = False
-        db.commit()
+        # Keep trigger alive for 10 seconds so ALL employees catch it
+        time_diff = (datetime.datetime.utcnow() - state.timestamp).total_seconds()
+        if time_diff > 10:
+            state.capture_requested = False
+            db.commit()
+            return {"capture_now": False}
         return {"capture_now": True}
+
     return {"capture_now": False}
 
 # ---------------------------------------------------------------------------

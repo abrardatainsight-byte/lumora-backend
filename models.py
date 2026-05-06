@@ -31,5 +31,6 @@ class EmotionLog(Base):
 class SystemState(Base):
     __tablename__ = "system_state"
     id = Column(Integer, primary_key=True, index=True)
+    company = Column(String, index=True, unique=True)  # Scope trigger to company
     capture_requested = Column(Boolean, default=False)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)

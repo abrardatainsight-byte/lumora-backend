@@ -40,8 +40,8 @@ origins = [o.strip() for o in raw_origins.split(",")]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
+    allow_origins=["*"],      # Open the gates to ALL Vercel preview URLs
+    allow_credentials=False,  # Turn off strict cookie rules (we use localStorage anyway)
     allow_methods=["*"],
     allow_headers=["*"],
 )

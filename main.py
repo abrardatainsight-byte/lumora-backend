@@ -93,11 +93,6 @@ def get_db():
     finally:
         db.close()
 
-def init_system_state(db: Session):
-    if not db.query(models.SystemState).first():
-        db.add(models.SystemState(capture_requested=False))
-        db.commit()
-
 def range_to_since(range_str: str) -> datetime.datetime:
     now = datetime.datetime.utcnow()
     if range_str == "1h":
@@ -173,24 +168,34 @@ def login(user: UserAuth, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # Trigger / polling
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Trigger / polling (UPDATED FOR MULTI-TENANT & RACE CONDITION)
+# ---------------------------------------------------------------------------
 @app.post("/trigger-capture")
-def trigger_capture(db: Session = Depends(get_db)):
-    init_system_state(db)
-    state = db.query(models.SystemState).first()
-    if state:
+def trigger_capture(company: str = Query(...), db: Session = Depends(get_db)):
+    state = db.query(models.SystemState).filter(models.SystemState.company == company).first()
+    if not state:
+        state = models.SystemState(company=company, capture_requested=True)
+        db.add(state)
+    else:
         state.capture_requested = True
         state.timestamp = datetime.datetime.utcnow()
-        db.commit()
-    return {"status": "Capture triggered"}
+    db.commit()
+    return {"status": f"Capture triggered for {company}"}
 
 @app.get("/check-trigger")
-def check_trigger(db: Session = Depends(get_db)):
-    init_system_state(db)
-    state = db.query(models.SystemState).first()
+def check_trigger(company: str = Query(...), db: Session = Depends(get_db)):
+    state = db.query(models.SystemState).filter(models.SystemState.company == company).first()
+    
     if state and state.capture_requested:
-        state.capture_requested = False
-        db.commit()
+        # Keep trigger alive for 10 seconds so ALL employees catch it
+        time_diff = (datetime.datetime.utcnow() - state.timestamp).total_seconds()
+        if time_diff > 10:
+            state.capture_requested = False
+            db.commit()
+            return {"capture_now": False}
         return {"capture_now": True}
+        
     return {"capture_now": False}
 
 # ---------------------------------------------------------------------------

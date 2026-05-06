@@ -36,29 +36,10 @@ models.Base.metadata.create_all(bind=engine)
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Lumora Emotion Detection API", version="2.0.0")
 
-# raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
-# origins = [o.strip() for o in raw_origins.split(",")]
-
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=origins,
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# ---------------------------------------------------------------------------
-# App + CORS (Fixed for Production)
-# ---------------------------------------------------------------------------
-app = FastAPI(title="Lumora Emotion Detection API", version="2.0.0")
-
 raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
 origins = [o.strip() for o in raw_origins.split(",")]
 
-# If origins is strictly ["*"], we must set allow_credentials to False
-credentials_allowed = True
-if "*" in origins:
-    credentials_allowed = False
+credentials_allowed = False if "*" in origins else True
 
 app.add_middleware(
     CORSMiddleware,
@@ -189,6 +170,9 @@ def login(user: UserAuth, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # Trigger / polling
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Trigger / polling (UPDATED FOR MULTI-TENANT & RACE CONDITION)
+# ---------------------------------------------------------------------------
 @app.post("/trigger-capture")
 def trigger_capture(company: str = Query(...), db: Session = Depends(get_db)):
     state = db.query(models.SystemState).filter(models.SystemState.company == company).first()
@@ -204,7 +188,6 @@ def trigger_capture(company: str = Query(...), db: Session = Depends(get_db)):
 @app.get("/check-trigger")
 def check_trigger(company: str = Query(...), db: Session = Depends(get_db)):
     state = db.query(models.SystemState).filter(models.SystemState.company == company).first()
-
     if state and state.capture_requested:
         # Keep trigger alive for 10 seconds so ALL employees catch it
         time_diff = (datetime.datetime.utcnow() - state.timestamp).total_seconds()
@@ -213,7 +196,6 @@ def check_trigger(company: str = Query(...), db: Session = Depends(get_db)):
             db.commit()
             return {"capture_now": False}
         return {"capture_now": True}
-
     return {"capture_now": False}
 
 # ---------------------------------------------------------------------------

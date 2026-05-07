@@ -3,13 +3,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # In production, set DATABASE_URL env var to a Postgres URL.
-# Falls back to local SQLite for development.
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "sqlite:///./emotion_system.db"
 )
 
-# Cloud providers give 'postgres://', but SQLAlchemy requires 'postgresql://'
+# Cloud providers sometimes give 'postgres://', but SQLAlchemy requires 'postgresql://'
 if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
     SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
 

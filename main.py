@@ -9,6 +9,7 @@ import datetime
 import time
 import base64
 import sys
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query
@@ -32,9 +33,27 @@ load_dotenv()
 models.Base.metadata.create_all(bind=engine)
 
 # ---------------------------------------------------------------------------
+# Eager-load ViT model at startup (Solves the 15-second timeout bug)
+# ---------------------------------------------------------------------------
+emotion_classifier = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global emotion_classifier
+    print("Loading Vision Transformer model on startup (this takes a moment)...")
+    emotion_classifier = pipeline(
+        "image-classification",
+        model="dima806/facial_emotions_image_detection",
+    )
+    print("Model loaded and ready for instant inference.")
+    yield
+    # Cleanup on shutdown
+    emotion_classifier = None
+
+# ---------------------------------------------------------------------------
 # App + CORS
 # ---------------------------------------------------------------------------
-app = FastAPI(title="Lumora Emotion Detection API", version="2.0.0")
+app = FastAPI(title="Lumora Emotion Detection API", version="2.0.0", lifespan=lifespan)
 
 raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
 origins = [o.strip() for o in raw_origins.split(",")]
@@ -48,20 +67,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# ---------------------------------------------------------------------------
-# Lazy-load ViT model (on first use, not at startup)
-# ---------------------------------------------------------------------------
-emotion_classifier = None
 
 def get_emotion_classifier():
     global emotion_classifier
-    if emotion_classifier is None:
-        print("Loading Vision Transformer model (on first inference) …")
-        emotion_classifier = pipeline(
-            "image-classification",
-            model="dima806/facial_emotions_image_detection",
-        )
-        print("Model loaded.")
     return emotion_classifier
 
 # ---------------------------------------------------------------------------
@@ -103,7 +111,7 @@ def range_to_since(range_str: str) -> datetime.datetime:
         return now.replace(hour=0, minute=0, second=0, microsecond=0)
     elif range_str == "month":
         return now - datetime.timedelta(days=30)
-    else:  # default: week
+    else:  
         return now - datetime.timedelta(days=7)
 
 # ---------------------------------------------------------------------------
@@ -113,7 +121,7 @@ class UserAuth(BaseModel):
     username: str
     password: str
     role: str
-    company: str  # Added Company Field
+    company: str 
 
 class CompanyCreate(BaseModel):
     name: str
@@ -145,7 +153,7 @@ def register(user: UserAuth, db: Session = Depends(get_db)):
         username=user.username,
         password_hash=user.password,
         role=user.role,
-        company=user.company  # Save company to DB
+        company=user.company  
     ))
     db.commit()
     return {"message": "Registered", "role": user.role, "company": user.company}
@@ -156,7 +164,7 @@ def login(user: UserAuth, db: Session = Depends(get_db)):
         models.User.username == user.username,
         models.User.password_hash == user.password,
         models.User.role == user.role,
-        models.User.company == user.company  # Validate company matches
+        models.User.company == user.company  
     ).first()
     if not db_user:
         raise HTTPException(400, "Invalid credentials, role, or company")
@@ -168,10 +176,7 @@ def login(user: UserAuth, db: Session = Depends(get_db)):
     }
 
 # ---------------------------------------------------------------------------
-# Trigger / polling
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Trigger / polling (UPDATED FOR MULTI-TENANT & RACE CONDITION)
+# Trigger / polling 
 # ---------------------------------------------------------------------------
 @app.post("/trigger-capture")
 def trigger_capture(company: str = Query(...), db: Session = Depends(get_db)):
@@ -189,7 +194,6 @@ def trigger_capture(company: str = Query(...), db: Session = Depends(get_db)):
 def check_trigger(company: str = Query(...), db: Session = Depends(get_db)):
     state = db.query(models.SystemState).filter(models.SystemState.company == company).first()
     if state and state.capture_requested:
-        # Keep trigger alive for 10 seconds so ALL employees catch it
         time_diff = (datetime.datetime.utcnow() - state.timestamp).total_seconds()
         if time_diff > 10:
             state.capture_requested = False
@@ -208,7 +212,6 @@ def analyze_emotion(
     db: Session = Depends(get_db),
 ):
     try:
-        # BUG FIX: Verify the user exists and is actually an employee
         user = db.query(models.User).filter(models.User.username == username).first()
         if not user or user.role != "employee":
             return {"status": "ignored", "message": "Only employees can record emotions."}
@@ -234,7 +237,7 @@ def analyze_emotion(
         raise HTTPException(500, "Failed to process image through AI model.")
 
 # ---------------------------------------------------------------------------
-# HR analytics — Multi-Tenant isolation applied
+# HR analytics 
 # ---------------------------------------------------------------------------
 @app.get("/hr/results")
 def get_hr_results(
@@ -358,7 +361,6 @@ def get_global_pulse(
 ):
     since = range_to_since(range)
 
-    # Active employees in window
     active_set = (
         db.query(models.EmotionLog.employee_username)
         .join(models.User, models.EmotionLog.employee_username == models.User.username)
@@ -368,7 +370,6 @@ def get_global_pulse(
     )
     active_count = len(active_set)
 
-    # Dominant emotion
     rows = (
         db.query(models.EmotionLog.emotion_text, func.count(models.EmotionLog.id).label("cnt"))
         .join(models.User, models.EmotionLog.employee_username == models.User.username)
@@ -379,7 +380,6 @@ def get_global_pulse(
     )
     dominant = rows.emotion_text if rows else "Neutral"
 
-    # Live ticker
     recent = (
         db.query(models.EmotionLog)
         .join(models.User, models.EmotionLog.employee_username == models.User.username)
